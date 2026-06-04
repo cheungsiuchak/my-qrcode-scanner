@@ -1,101 +1,277 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
+<!doctype html>
+<html lang="zh-Hant" class="h-full">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>雲端 QR Code 點名系統</title>
-    <script src="https://unpkg.com/html5-qrcode"></script>
-    <style>
-        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
-        .container { max-width: 500px; width: 100%; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; box-sizing: border-box; }
-        h1 { color: #333; margin-bottom: 20px; font-size: 24px; }
-        #reader { width: 100%; border-radius: 8px; overflow: hidden; margin-bottom: 20px; background: #eee; }
-        button { background-color: #4CAF50; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; }
-        button:hover { background-color: #45a049; }
-        #result { margin-top: 20px; padding: 15px; border-radius: 6px; font-size: 18px; font-weight: bold; display: none; }
-        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>活動雲端點名系統</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    * { font-family: 'Noto Sans TC', sans-serif; }
+    .checked-in { background: #064e3b !important; border-color: #10b981 !important; }
+  </style>
 </head>
-<body>
+<body class="h-full bg-slate-900 text-white">
+  <div id="app" class="h-full w-full overflow-auto">
+    <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+      <h1 id="main-title" class="text-2xl font-bold text-emerald-400">📋 雲端 QR 點名系統</h1>
+      <div class="flex gap-2">
+        <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition">
+          <i data-lucide="upload" style="width:16px;height:16px"></i> 上傳 Excel 暫存名單
+          <input type="file" accept=".xlsx,.xls,.csv" class="hidden" id="fileInput">
+        </label>
+      </div>
+    </header>
 
-<div class="container">
-    <h1>活動雲端點名系統</h1>
-    <div id="reader"></div>
-    <button id="start-btn" onclick="startScan()">開啟相機掃瞄</button>
-    <div id="result"></div>
-</div>
+    <main class="p-6 max-w-5xl mx-auto">
+      <div id="empty-state" class="text-center py-20 text-slate-400">
+        <i data-lucide="file-spreadsheet" style="width:64px;height:64px;margin:0 auto;display:block;opacity:0.5"></i>
+        <p class="mt-4 text-lg">請上傳包含參加者資料的 Excel 檔案</p>
+        <p class="mt-2 text-sm text-slate-500">欄位需包含：班別、姓名、學號、專屬號碼</p>
+      </div>
 
-<script>
-    // 填入你的 Google Apps Script 網頁應用程式網址
-    const GAS_URL = "https://script.google.com/macros/s/AKfycbx9oc24nIAG_jiFUypEMVzbNbE0-4rfqkcZu7oOA6qzQs-BnKnrfJDqmONSdDM6vQVR/exec"; 
-    
-    let html5QrcodeScanner;
+      <div id="stats" class="hidden grid grid-cols-3 gap-4 mb-6">
+        <div class="bg-slate-800 rounded-xl p-4 text-center border border-slate-700">
+          <div class="text-3xl font-bold text-white" id="total-count">0</div>
+          <div class="text-sm text-slate-400 mt-1">總人數</div>
+        </div>
+        <div class="bg-slate-800 rounded-xl p-4 text-center border border-emerald-800">
+          <div class="text-3xl font-bold text-emerald-400" id="checked-count">0</div>
+          <div class="text-sm text-slate-400 mt-1">已簽到</div>
+        </div>
+        <div class="bg-slate-800 rounded-xl p-4 text-center border border-amber-800">
+          <div class="text-3xl font-bold text-amber-400" id="unchecked-count">0</div>
+          <div class="text-sm text-slate-400 mt-1">未簽到</div>
+        </div>
+      </div>
 
-    function startScan() {
-        document.getElementById('start-btn').style.display = 'none';
+      <div id="actions" class="hidden flex gap-3 mb-6">
+        <button id="btn-camera" class="bg-emerald-600 hover:bg-emerald-500 px-5 py-3 rounded-lg font-medium flex items-center gap-2 transition">
+          <i data-lucide="camera" style="width:20px;height:20px"></i> 開啟相機掃瞄 QR 碼
+        </button>
+        <button id="btn-manual" class="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-lg font-medium flex items-center gap-2 transition">
+          <i data-lucide="keyboard" style="width:20px;height:20px"></i> 手動輸入號碼
+        </button>
+      </div>
+
+      <div id="participant-list" class="hidden space-y-2"></div>
+
+      <div id="camera-modal" class="hidden fixed inset-0 bg-black/95 flex flex-col items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 rounded-2xl p-6 max-w-md w-full border border-slate-600 text-center">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold flex items-center gap-2 text-emerald-400"><i data-lucide="scan"></i> 請對準 QR Code</h3>
+            <button id="camera-close" class="text-slate-400 hover:text-white"><i data-lucide="x" style="width:24px;height:24px"></i></button>
+          </div>
+          <div id="reader" class="w-full bg-slate-900 rounded-lg overflow-hidden border border-slate-700"></div>
+          <div id="camera-result" class="mt-4 text-center text-lg font-bold text-slate-300 min-h-6">正在初始化相機...</div>
+        </div>
+      </div>
+
+      <div id="input-modal" class="hidden fixed inset-0 bg-black/90 flex flex-col items-center justify-center z-50 p-4">
+        <div class="bg-slate-800 rounded-2xl p-6 max-w-md w-full border border-slate-600">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold">手動輸入專屬號碼</h3>
+            <button id="input-close" class="text-slate-400 hover:text-white"><i data-lucide="x" style="width:24px;height:24px"></i></button>
+          </div>
+          <input id="code-input" type="text" placeholder="請輸入學員專屬號碼" class="w-full px-3 py-3 rounded-lg bg-slate-700 border border-slate-600 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 text-center text-xl">
+          <div id="input-result" class="mt-4 text-center text-md font-bold text-slate-400 min-h-6">等待輸入...</div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // 💡 關鍵設定：請置換成你自己的 Google Apps Script 網頁應用程式網址
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbx9oc24nIAG_jiFUypEMVzbNbE0-4rfqkcZu7oOA6qzQs-BnKnrfJDqmONSdDM6vQVR/exec";
+
+    // 系統狀態
+    let participants = [];
+    let checkedInMap = new Map();
+    let html5QrcodeScanner = null;
+
+    // Excel 檔案解析上傳
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        const wb = XLSX.read(evt.target.result, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
         
-        html5QrcodeScanner = new Html5Qrcode("reader");
-        html5QrcodeScanner.start(
-            { facingMode: "environment" }, // 預設開啟後置鏡頭
-            {
-                fps: 10,    // 每秒掃瞄幾次
-                qrbox: { width: 250, height: 250 } // 掃瞄框大小
-            },
-            qrCodeMessage => {
-                // 掃瞄成功，暫停掃瞄並發送資料到 Google Sheets
-                html5QrcodeScanner.pause(true);
-                sendDataToGoogleSheet(qrCodeMessage);
-            },
-            errorMessage => {
-                // 掃瞄中無匹配的錯誤（可忽略）
-            }
-        ).catch(err => {
-            alert("無法開啟相機，請確認是否給予瀏覽器相機權限。");
-            document.getElementById('start-btn').style.display = 'block';
-        });
+        // 配合 Canva 原生邏輯：自第 3 列（索引 2）開始讀取整張表格
+        participants = data.slice(2).map((row) => ({
+          class: String(row[0] || '').trim(),
+          name: String(row[1] || '').trim(),
+          studentId: String(row[2] || '').trim(),
+          uniqueCode: String(row[3] || '').trim()
+        })).filter(p => p.uniqueCode && p.name);
+        
+        renderList();
+      };
+      reader.readAsArrayBuffer(file);
+    });
+
+    // 渲染前端畫面與統計數據
+    function renderList() {
+      const empty = document.getElementById('empty-state');
+      const stats = document.getElementById('stats');
+      const actions = document.getElementById('actions');
+      const list = document.getElementById('participant-list');
+
+      if (participants.length === 0) {
+        empty.classList.remove('hidden');
+        stats.classList.add('hidden');
+        actions.classList.add('hidden');
+        list.classList.add('hidden');
+        return;
+      }
+
+      empty.classList.add('hidden');
+      stats.classList.remove('hidden');
+      actions.classList.remove('hidden');
+      list.classList.remove('hidden');
+
+      const checkedCount = checkedInMap.size;
+      document.getElementById('total-count').textContent = participants.length;
+      document.getElementById('checked-count').textContent = checkedCount;
+      document.getElementById('unchecked-count').textContent = participants.length - checkedCount;
+
+      list.innerHTML = participants.map(p => {
+        const isChecked = checkedInMap.has(p.uniqueCode);
+        return `
+          <div class="flex items-center gap-3 p-3 rounded-xl border transition ${isChecked ? 'checked-in border-emerald-500' : 'border-slate-700 bg-slate-800'}">
+            <div class="w-3 h-3 rounded-full ${isChecked ? 'bg-emerald-400' : 'bg-slate-600'}"></div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium ${isChecked ? 'text-emerald-100' : 'text-slate-300'}">${p.class} | ${p.name} (${p.studentId})</div>
+              <div class="text-xs text-slate-400 mt-0.5">條碼：${p.uniqueCode}</div>
+            </div>
+            <span class="text-xs px-2 py-1 rounded-full font-bold ${isChecked ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-400'}">${isChecked ? '✓ 已簽到' : '未簽到'}</span>
+          </div>`;
+      }).join('');
+      lucide.createIcons();
     }
 
-    function sendDataToGoogleSheet(id) {
-        const resultDiv = document.getElementById('result');
-        resultDiv.style.display = 'block';
-        resultDiv.className = '';
-        resultDiv.innerText = "連線雲端資料庫中...";
+    // 手動輸入介面邏輯
+    document.getElementById('btn-manual').addEventListener('click', () => {
+      document.getElementById('input-modal').classList.remove('hidden');
+      const input = document.getElementById('code-input');
+      input.value = '';
+      input.focus();
+      document.getElementById('input-result').textContent = '等待輸入...';
+      document.getElementById('input-result').className = 'mt-4 text-center text-sm text-slate-400 min-h-6';
+    });
+    document.getElementById('input-close').addEventListener('click', () => document.getElementById('input-modal').classList.add('hidden'));
 
-        fetch(GAS_URL, {
-            method: 'POST',
-            body: JSON.stringify({ id: id }),
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' } // 避免跨域預檢請求問題
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === 'success') {
-                resultDiv.className = 'success';
-                resultDiv.innerHTML = `點名成功！<br>🎉 ${data.name} 同學已簽到`;
-            } else if (data.status === 'not_found') {
-                resultDiv.className = 'error';
-                resultDiv.innerText = `錯誤：找不到此專屬號碼 (${id})`;
-            } else {
-                resultDiv.className = 'error';
-                resultDiv.innerText = "雲端處理失敗，請重試。";
-            }
-            
-            // 3秒後自動恢復相機掃瞄，準備掃下一個人
-            setTimeout(() => {
-                resultDiv.style.display = 'none';
-                html5QrcodeScanner.resume();
-            }, 3000);
-        })
-        .catch(error => {
-            resultDiv.className = 'error';
-            resultDiv.innerText = "網路連線錯誤，請檢查網路。";
-            setTimeout(() => {
-                resultDiv.style.display = 'none';
-                html5QrcodeScanner.resume();
-            }, 3000);
-        });
+    document.getElementById('code-input').addEventListener('keypress', async (e) => {
+      if (e.key !== 'Enter') return;
+      await processCheckIn(e.target.value.trim(), 'input-result', e.target);
+    });
+
+    // [核心修正] 相機 QR Code 掃描與關閉邏輯
+    document.getElementById('btn-camera').addEventListener('click', openCameraModal);
+    document.getElementById('camera-close').addEventListener('click', closeCameraModal);
+
+    function openCameraModal() {
+      document.getElementById('camera-modal').classList.remove('hidden');
+      const resultDiv = document.getElementById('camera-result');
+      resultDiv.textContent = '相機啟動中...';
+      resultDiv.className = 'mt-4 text-center text-md font-bold text-slate-300';
+
+      html5QrcodeScanner = new Html5Qrcode("reader");
+      html5QrcodeScanner.start(
+        { facingMode: "environment" }, // 強制開啟手機後置主鏡頭
+        { fps: 10, qrbox: { width: 220, height: 220 } },
+        async (qrCodeMessage) => {
+          html5QrcodeScanner.pause(true); // 掃描成功後先暫停鏡頭，避免重複撈取
+          await processCheckIn(qrCodeMessage, 'camera-result', null);
+        },
+        (errorMessage) => { /* 忽略持續辨識中的雜訊錯誤 */ }
+      ).catch(err => {
+        resultDiv.textContent = '✗ 無法存取相機，請確認是否給予網頁相機權限';
+        resultDiv.className = 'mt-4 text-center text-sm text-red-400';
+      });
     }
-</script>
 
-</body>
-</html>
+    function closeCameraModal() {
+      if (html5QrcodeScanner) {
+        html5QrcodeScanner.stop().then(() => {
+          html5QrcodeScanner = null;
+          document.getElementById('camera-modal').classList.add('hidden');
+        }).catch(err => {
+          document.getElementById('camera-modal').classList.add('hidden');
+        });
+      } else {
+        document.getElementById('camera-modal').classList.add('hidden');
+      }
+    }
+
+    // 核心雲端點名處理邏輯 (連動 Google Sheets 與前端記憶體)
+    async function processCheckIn(code, resultDivId, inputElement) {
+      if (!code) return;
+      const resultDiv = document.getElementById(resultDivId);
+      resultDiv.textContent = "正在同步連線雲端資料庫...";
+      resultDiv.className = "mt-4 text-center text-md font-bold text-amber-400";
+
+      // 先於前端陣列確認該人員是否存在
+      const localMatch = participants.find(p => p.uniqueCode === code);
+
+      if (!localMatch) {
+        resultDiv.textContent = `✗ 系統查無專屬號碼 "${code}"`;
+        resultDiv.className = 'mt-4 text-center text-md font-bold text-red-400';
+        resetSession(inputElement, resultDiv);
+        return;
+      }
+
+      try {
+        // 發送 POST 請求傳給 Google Apps Script API 進行即時點名
+        const response = await fetch(GAS_URL, {
+          method: 'POST',
+          body: JSON.stringify({ id: code }),
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+        });
+        const data = await response.json();
+
+        if (data.status === 'success') {
+          // 雲端儲存成功，同步更新前端本機畫面狀態
+          checkedInMap.set(code, true);
+          renderList();
+
+          resultDiv.textContent = `🎉 點名成功！ ${data.name} 同學已簽到`;
+          resultDiv.className = 'mt-4 text-center text-lg font-bold text-emerald-400';
+        } else {
+          resultDiv.textContent = '✗ 雲端寫入失敗，請確認資料庫設定';
+          resultDiv.className = 'mt-4 text-center text-md font-bold text-red-400';
+        }
+      } catch (error) {
+        resultDiv.textContent = '✗ 網路連線逾時，但已先暫存本地紀錄';
+        resultDiv.className = 'mt-4 text-center text-sm text-amber-400';
+        // 網路差時的安全保險機制：允許本地先亮綠燈
+        checkedInMap.set(code, true);
+        renderList();
+      }
+
+      resetSession(inputElement, resultDiv);
+    }
+
+    // 自動重置機制，準備掃描/輸入下一個人
+    function resetSession(inputElement, resultDiv) {
+      setTimeout(() => {
+        if (inputElement) {
+          inputElement.value = '';
+          inputElement.focus();
+          resultDiv.textContent = '等待輸入...';
+          resultDiv.className = 'mt-4 text-center text-sm text-slate-400';
+        } else if (html5QrcodeScanner) {
+          resultDiv.textContent = '掃瞄中...';
+          resultDiv.className = 'mt-4 text-center text-md font-bold text-slate-300';
+          html5QrcodeScanner.resume();
+        }
+      }, 2500);
+    }
+
+    // 初始化圖標
+    lucide.
