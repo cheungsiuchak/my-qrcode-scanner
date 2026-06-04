@@ -3,10 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>活動雲端點名系統</title>
+  <title>活動雲端自動點名系統</title>
   <script src="https://cdn.tailwindcss.com/3.4.17"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.263.0/dist/umd/lucide.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://unpkg.com/html5-qrcode"></script>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
@@ -17,20 +16,17 @@
 <body class="h-full bg-slate-900 text-white">
   <div id="app" class="h-full w-full overflow-auto">
     <header class="bg-slate-800 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
-      <h1 id="main-title" class="text-2xl font-bold text-emerald-400">📋 雲端 QR 點名系統</h1>
-      <div class="flex gap-2">
-        <label class="cursor-pointer bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition">
-          <i data-lucide="upload" style="width:16px;height:16px"></i> 上傳 Excel 暫存名單
-          <input type="file" accept=".xlsx,.xls,.csv" class="hidden" id="fileInput">
-        </label>
-      </div>
+      <h1 id="main-title" class="text-2xl font-bold text-emerald-400">📋 雲端自動點名系統</h1>
+      <button id="btn-refresh" onclick="fetchListData()" class="bg-slate-700 hover:bg-slate-600 p-2 rounded-lg text-sm transition flex items-center gap-1">
+        <i data-lucide="refresh-cw" style="width:16px;height:16px"></i> 重新整理名單
+      </button>
     </header>
 
     <main class="p-6 max-w-5xl mx-auto">
-      <div id="empty-state" class="text-center py-20 text-slate-400">
-        <i data-lucide="file-spreadsheet" style="width:64px;height:64px;margin:0 auto;display:block;opacity:0.5"></i>
-        <p class="mt-4 text-lg">請上傳包含參加者資料的 Excel 檔案</p>
-        <p class="mt-2 text-sm text-slate-500">欄位需包含：班別、姓名、學號、專屬號碼</p>
+      
+      <div id="loading-state" class="text-center py-20 text-slate-400">
+        <div class="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-emerald-400 border-r-2 mb-4"></div>
+        <p id="loading-text" class="text-lg">正在同步雲端名單，請稍候...</p>
       </div>
 
       <div id="stats" class="hidden grid grid-cols-3 gap-4 mb-6">
@@ -49,11 +45,11 @@
       </div>
 
       <div id="actions" class="hidden flex gap-3 mb-6">
-        <button id="btn-camera" class="bg-emerald-600 hover:bg-emerald-500 px-5 py-3 rounded-lg font-medium flex items-center gap-2 transition">
-          <i data-lucide="camera" style="width:20px;height:20px"></i> 開啟相機掃瞄 QR 碼
+        <button id="btn-camera" class="bg-emerald-600 hover:bg-emerald-500 px-5 py-3 rounded-lg font-medium flex items-center gap-2 transition flex-1 sm:flex-none justify-center">
+          <i data-lucide="camera" style="width:20px;height:20px"></i> 開啟相機掃瞄
         </button>
-        <button id="btn-manual" class="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-lg font-medium flex items-center gap-2 transition">
-          <i data-lucide="keyboard" style="width:20px;height:20px"></i> 手動輸入號碼
+        <button id="btn-manual" class="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-lg font-medium flex items-center gap-2 transition flex-1 sm:flex-none justify-center">
+          <i data-lucide="keyboard" style="width:20px;height:20px"></i> 手動輸入
         </button>
       </div>
 
@@ -89,67 +85,73 @@
 
     // 系統狀態
     let participants = [];
-    let checkedInMap = new Map();
     let html5QrcodeScanner = null;
 
-    // Excel 檔案解析上傳
-    document.getElementById('fileInput').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = async (evt) => {
-        const wb = XLSX.read(evt.target.result, { type: 'array' });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-        
-        // 配合 Canva 原生邏輯：自第 3 列（索引 2）開始讀取整張表格
-        participants = data.slice(2).map((row) => ({
-          class: String(row[0] || '').trim(),
-          name: String(row[1] || '').trim(),
-          studentId: String(row[2] || '').trim(),
-          uniqueCode: String(row[3] || '').trim()
-        })).filter(p => p.uniqueCode && p.name);
-        
-        renderList();
-      };
-      reader.readAsArrayBuffer(file);
+    // 網頁開啟時，自動向雲端獲取最新名單
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchListData();
     });
 
-    // 渲染前端畫面與統計數據
-    function renderList() {
-      const empty = document.getElementById('empty-state');
+    // 遠端撈取 Google Sheets 名單函數
+    async function fetchListData() {
+      const loadingState = document.getElementById('loading-state');
+      const loadingText = document.getElementById('loading-text');
       const stats = document.getElementById('stats');
       const actions = document.getElementById('actions');
       const list = document.getElementById('participant-list');
 
-      if (participants.length === 0) {
-        empty.classList.remove('hidden');
-        stats.classList.add('hidden');
-        actions.classList.add('hidden');
-        list.classList.add('hidden');
-        return;
-      }
+      loadingState.classList.remove('hidden');
+      loadingText.textContent = "正在同步雲端名單，請稍候...";
+      stats.classList.add('hidden');
+      actions.classList.add('hidden');
+      list.classList.add('hidden');
 
-      empty.classList.add('hidden');
+      try {
+        const response = await fetch(GAS_URL);
+        const data = await response.json();
+        
+        if (Array.isArray(data)) {
+          participants = data;
+          loadingState.classList.add('hidden');
+          renderList();
+        } else {
+          loadingText.textContent = "✗ 雲端資料格式錯誤，請檢查後台試算表。";
+        }
+      } catch (error) {
+        loadingText.textContent = "✗ 無法連線至雲端資料庫，請檢查網路或 GAS 網址。";
+        console.error(error);
+      }
+    }
+
+    // 渲染前端畫面與統計數據
+    function renderList() {
+      const stats = document.getElementById('stats');
+      const actions = document.getElementById('actions');
+      const list = document.getElementById('participant-list');
+
       stats.classList.remove('hidden');
       actions.classList.remove('hidden');
       list.classList.remove('hidden');
 
-      const checkedCount = checkedInMap.size;
+      const checkedCount = participants.filter(p => p.checkedIn).length;
       document.getElementById('total-count').textContent = participants.length;
       document.getElementById('checked-count').textContent = checkedCount;
       document.getElementById('unchecked-count').textContent = participants.length - checkedCount;
 
+      if (participants.length === 0) {
+        list.innerHTML = `<div class="text-center py-10 text-slate-500">雲端試算表內目前沒有參加者資料</div>`;
+        return;
+      }
+
       list.innerHTML = participants.map(p => {
-        const isChecked = checkedInMap.has(p.uniqueCode);
         return `
-          <div class="flex items-center gap-3 p-3 rounded-xl border transition ${isChecked ? 'checked-in border-emerald-500' : 'border-slate-700 bg-slate-800'}">
-            <div class="w-3 h-3 rounded-full ${isChecked ? 'bg-emerald-400' : 'bg-slate-600'}"></div>
+          <div class="flex items-center gap-3 p-3 rounded-xl border transition ${p.checkedIn ? 'checked-in border-emerald-500' : 'border-slate-700 bg-slate-800'}">
+            <div class="w-3 h-3 rounded-full ${p.checkedIn ? 'bg-emerald-400' : 'bg-slate-600'}"></div>
             <div class="flex-1 min-w-0">
-              <div class="text-sm font-medium ${isChecked ? 'text-emerald-100' : 'text-slate-300'}">${p.class} | ${p.name} (${p.studentId})</div>
+              <div class="text-sm font-medium ${p.checkedIn ? 'text-emerald-100' : 'text-slate-300'}">${p.class} | ${p.name} (${p.studentId})</div>
               <div class="text-xs text-slate-400 mt-0.5">條碼：${p.uniqueCode}</div>
             </div>
-            <span class="text-xs px-2 py-1 rounded-full font-bold ${isChecked ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-400'}">${isChecked ? '✓ 已簽到' : '未簽到'}</span>
+            <span class="text-xs px-2 py-1 rounded-full font-bold ${p.checkedIn ? 'bg-emerald-500 text-white' : 'bg-slate-700 text-slate-400'}">${p.checkedIn ? '✓ 已簽到' : '未簽到'}</span>
           </div>`;
       }).join('');
       lucide.createIcons();
@@ -171,7 +173,7 @@
       await processCheckIn(e.target.value.trim(), 'input-result', e.target);
     });
 
-    // [核心修正] 相機 QR Code 掃描與關閉邏輯
+    // 相機 QR Code 掃描與關閉邏輯
     document.getElementById('btn-camera').addEventListener('click', openCameraModal);
     document.getElementById('camera-close').addEventListener('click', closeCameraModal);
 
@@ -183,13 +185,13 @@
 
       html5QrcodeScanner = new Html5Qrcode("reader");
       html5QrcodeScanner.start(
-        { facingMode: "environment" }, // 強制開啟手機後置主鏡頭
+        { facingMode: "environment" },
         { fps: 10, qrbox: { width: 220, height: 220 } },
         async (qrCodeMessage) => {
-          html5QrcodeScanner.pause(true); // 掃描成功後先暫停鏡頭，避免重複撈取
+          html5QrcodeScanner.pause(true);
           await processCheckIn(qrCodeMessage, 'camera-result', null);
         },
-        (errorMessage) => { /* 忽略持續辨識中的雜訊錯誤 */ }
+        (errorMessage) => {}
       ).catch(err => {
         resultDiv.textContent = '✗ 無法存取相機，請確認是否給予網頁相機權限';
         resultDiv.className = 'mt-4 text-center text-sm text-red-400';
@@ -209,14 +211,14 @@
       }
     }
 
-    // 核心雲端點名處理邏輯 (連動 Google Sheets 與前端記憶體)
+    // 核心雲端點名處理邏輯
     async function processCheckIn(code, resultDivId, inputElement) {
       if (!code) return;
       const resultDiv = document.getElementById(resultDivId);
       resultDiv.textContent = "正在同步連線雲端資料庫...";
       resultDiv.className = "mt-4 text-center text-md font-bold text-amber-400";
 
-      // 先於前端陣列確認該人員是否存在
+      // 檢查本機名單
       const localMatch = participants.find(p => p.uniqueCode === code);
 
       if (!localMatch) {
@@ -227,7 +229,6 @@
       }
 
       try {
-        // 發送 POST 請求傳給 Google Apps Script API 進行即時點名
         const response = await fetch(GAS_URL, {
           method: 'POST',
           body: JSON.stringify({ id: code }),
@@ -236,8 +237,8 @@
         const data = await response.json();
 
         if (data.status === 'success') {
-          // 雲端儲存成功，同步更新前端本機畫面狀態
-          checkedInMap.set(code, true);
+          // 同步前端畫面狀態
+          localMatch.checkedIn = true;
           renderList();
 
           resultDiv.textContent = `🎉 點名成功！ ${data.name} 同學已簽到`;
@@ -247,17 +248,13 @@
           resultDiv.className = 'mt-4 text-center text-md font-bold text-red-400';
         }
       } catch (error) {
-        resultDiv.textContent = '✗ 網路連線逾時，但已先暫存本地紀錄';
-        resultDiv.className = 'mt-4 text-center text-sm text-amber-400';
-        // 網路差時的安全保險機制：允許本地先亮綠燈
-        checkedInMap.set(code, true);
-        renderList();
+        resultDiv.textContent = '✗ 網路連線逾時，請再試一次';
+        resultDiv.className = 'mt-4 text-center text-sm text-red-400';
       }
 
       resetSession(inputElement, resultDiv);
     }
 
-    // 自動重置機制，準備掃描/輸入下一個人
     function resetSession(inputElement, resultDiv) {
       setTimeout(() => {
         if (inputElement) {
@@ -273,5 +270,7 @@
       }, 2500);
     }
 
-    // 初始化圖標
-    lucide.
+    lucide.createIcons();
+  </script>
+</body>
+</html>
