@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雲端 QR Code 點名系統</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { max-width: 500px; width: 100%; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; box-sizing: border-box; }
+        h1 { color: #333; margin-bottom: 20px; font-size: 24px; }
+        #reader { width: 100%; border-radius: 8px; overflow: hidden; margin-bottom: 20px; background: #eee; }
+        button { background-color: #4CAF50; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; transition: 0.3s; }
+        button:hover { background-color: #45a049; }
+        #result { margin-top: 20px; padding: 15px; border-radius: 6px; font-size: 18px; font-weight: bold; display: none; }
+        .success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>活動雲端點名系統</h1>
+    <div id="reader"></div>
+    <button id="start-btn" onclick="startScan()">開啟相機掃瞄</button>
+    <div id="result"></div>
+</div>
+
+<script>
+    // 填入你的 Google Apps Script 網頁應用程式網址
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbx9oc24nIAG_jiFUypEMVzbNbE0-4rfqkcZu7oOA6qzQs-BnKnrfJDqmONSdDM6vQVR/exec"; 
+    
+    let html5QrcodeScanner;
+
+    function startScan() {
+        document.getElementById('start-btn').style.display = 'none';
+        
+        html5QrcodeScanner = new Html5Qrcode("reader");
+        html5QrcodeScanner.start(
+            { facingMode: "environment" }, // 預設開啟後置鏡頭
+            {
+                fps: 10,    // 每秒掃瞄幾次
+                qrbox: { width: 250, height: 250 } // 掃瞄框大小
+            },
+            qrCodeMessage => {
+                // 掃瞄成功，暫停掃瞄並發送資料到 Google Sheets
+                html5QrcodeScanner.pause(true);
+                sendDataToGoogleSheet(qrCodeMessage);
+            },
+            errorMessage => {
+                // 掃瞄中無匹配的錯誤（可忽略）
+            }
+        ).catch(err => {
+            alert("無法開啟相機，請確認是否給予瀏覽器相機權限。");
+            document.getElementById('start-btn').style.display = 'block';
+        });
+    }
+
+    function sendDataToGoogleSheet(id) {
+        const resultDiv = document.getElementById('result');
+        resultDiv.style.display = 'block';
+        resultDiv.className = '';
+        resultDiv.innerText = "連線雲端資料庫中...";
+
+        fetch(GAS_URL, {
+            method: 'POST',
+            body: JSON.stringify({ id: id }),
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' } // 避免跨域預檢請求問題
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === 'success') {
+                resultDiv.className = 'success';
+                resultDiv.innerHTML = `點名成功！<br>🎉 ${data.name} 同學已簽到`;
+            } else if (data.status === 'not_found') {
+                resultDiv.className = 'error';
+                resultDiv.innerText = `錯誤：找不到此專屬號碼 (${id})`;
+            } else {
+                resultDiv.className = 'error';
+                resultDiv.innerText = "雲端處理失敗，請重試。";
+            }
+            
+            // 3秒後自動恢復相機掃瞄，準備掃下一個人
+            setTimeout(() => {
+                resultDiv.style.display = 'none';
+                html5QrcodeScanner.resume();
+            }, 3000);
+        })
+        .catch(error => {
+            resultDiv.className = 'error';
+            resultDiv.innerText = "網路連線錯誤，請檢查網路。";
+            setTimeout(() => {
+                resultDiv.style.display = 'none';
+                html5QrcodeScanner.resume();
+            }, 3000);
+        });
+    }
+</script>
+
+</body>
+</html>
